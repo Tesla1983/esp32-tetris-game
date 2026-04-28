@@ -31,6 +31,32 @@ idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+### 如果提示 `IDF_PATH` 未设置
+
+你需要先安装并激活 ESP-IDF 环境。最常见方式如下（Linux/macOS）：
+
+```bash
+git clone --recursive https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+cd ~/esp/esp-idf
+./install.sh esp32
+. ./export.sh
+```
+
+然后在同一个终端中回到本项目再执行：
+
+```bash
+idf.py set-target esp32
+idf.py build
+```
+
+如果你希望每次打开终端都自动可用，可把下面这行加到 `~/.bashrc`：
+
+```bash
+source ~/esp/esp-idf/export.sh
+```
+
+> 说明：`export.sh` 会自动设置 `IDF_PATH`、Python 虚拟环境和工具链路径，通常不需要你手动 `export IDF_PATH=...`。
+
 ## 目录结构
 
 - `CMakeLists.txt`：工程入口
