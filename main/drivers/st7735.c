@@ -1,4 +1,5 @@
 #include "drivers/st7735.h"
+#include "esp_check.h"
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
