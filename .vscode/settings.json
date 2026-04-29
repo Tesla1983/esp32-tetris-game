@@ -1,0 +1,25 @@
+{
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.intelliSenseCacheSize": 5120,
+  "C_Cpp.intelliSenseMemoryLimit": 16384,
+  
+  "idf.ninjaArgs": ["-j12"],
+  
+
+  "idf.openOcdConfigs": [
+    "board/esp32-wrover-kit-3.3v.cfg"
+  ],
+  "idf.portWin": "COM7",
+  "idf.currentSetup": "E:\\esp\\.espressif\\v6.0\\esp-idf",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32"
+  },
+  "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "-j=12",
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=e:\\esp32_st7789\\esp32_st7789\\build"
+  ],
+  "idf.flashType": "UART"
+}

@@ -78,6 +78,12 @@ static inline esp_err_t st7735_send_data(const void *data, int len) {
 static void st7735_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     uint8_t data[4];
 
+    uint16_t x_offset = 2;
+    uint16_t y_offset = 1;
+    
+    x0 += x_offset; x1 += x_offset;
+    y0 += y_offset; y1 += y_offset;
+
     st7735_send_cmd(ST7735_CMD_CASET);
     data[0] = (x0 >> 8) & 0xFF;
     data[1] = x0 & 0xFF;
@@ -108,7 +114,7 @@ static esp_err_t st7735_init(void) {
     };
 
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 40 * 1000 * 1000,
+        .clock_speed_hz = 20 * 1000 * 1000,
         .mode = 0,
         .spics_io_num = PIN_NUM_CS,
         .queue_size = 2,
@@ -181,7 +187,7 @@ static esp_err_t st7735_init(void) {
 
     st7735_send_cmd(ST7735_CMD_INVOFF);
 
-    uint8_t madctl = 0x00;
+    uint8_t madctl = 0xc0;
     st7735_send_cmd(ST7735_CMD_MADCTL);
     st7735_send_data(&madctl, 1);
 
@@ -245,11 +251,11 @@ static inline void st7735_clear(uint16_t color) {
 
 // ========== 俄罗斯方块逻辑 ==========
 #define BOARD_W 10
-#define BOARD_H 20
+#define BOARD_H 13
 
 #define CELL_SIZE 12
 #define OFFSET_X 4
-#define OFFSET_Y 0
+#define OFFSET_Y 2
 
 #define COLOR_BG 0x0000
 #define COLOR_GRID 0x2104
