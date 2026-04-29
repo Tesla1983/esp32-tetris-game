@@ -10,7 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-// ========== ST7789 + 屏幕配置 ==========
+// ========== ST7735 + 屏幕配置 ==========
 #define LCD_HOST SPI2_HOST
 #define PIN_NUM_MOSI 2
 #define PIN_NUM_CLK 15
@@ -22,25 +22,39 @@
 #define LCD_H_RES 128
 #define LCD_V_RES 160
 
-// ST7789 常用命令
-#define ST7789_CMD_SWRESET 0x01
-#define ST7789_CMD_SLPOUT 0x11
-#define ST7789_CMD_COLMOD 0x3A
-#define ST7789_CMD_MADCTL 0x36
-#define ST7789_CMD_CASET 0x2A
-#define ST7789_CMD_RASET 0x2B
-#define ST7789_CMD_RAMWR 0x2C
-#define ST7789_CMD_DISPON 0x29
-#define ST7789_CMD_INVON 0x21
+// ST7735 常用命令
+#define ST7735_CMD_SWRESET 0x01
+#define ST7735_CMD_SLPOUT 0x11
+#define ST7735_CMD_FRMCTR1 0xB1
+#define ST7735_CMD_FRMCTR2 0xB2
+#define ST7735_CMD_FRMCTR3 0xB3
+#define ST7735_CMD_INVCTR 0xB4
+#define ST7735_CMD_PWCTR1 0xC0
+#define ST7735_CMD_PWCTR2 0xC1
+#define ST7735_CMD_PWCTR3 0xC2
+#define ST7735_CMD_PWCTR4 0xC3
+#define ST7735_CMD_PWCTR5 0xC4
+#define ST7735_CMD_VMCTR1 0xC5
+#define ST7735_CMD_INVOFF 0x20
+#define ST7735_CMD_INVON 0x21
+#define ST7735_CMD_MADCTL 0x36
+#define ST7735_CMD_COLMOD 0x3A
+#define ST7735_CMD_CASET 0x2A
+#define ST7735_CMD_RASET 0x2B
+#define ST7735_CMD_GMCTRP1 0xE0
+#define ST7735_CMD_GMCTRN1 0xE1
+#define ST7735_CMD_NORON 0x13
+#define ST7735_CMD_DISPON 0x29
+#define ST7735_CMD_RAMWR 0x2C
 
 typedef struct {
     spi_device_handle_t spi;
-} st7789_dev_t;
+} st7735_dev_t;
 
 static const char *TAG = "tetris";
-static st7789_dev_t g_lcd;
+static st7735_dev_t g_lcd;
 
-static inline esp_err_t st7789_send_cmd(uint8_t cmd) {
+static inline esp_err_t st7735_send_cmd(uint8_t cmd) {
     gpio_set_level(PIN_NUM_DC, 0);
     spi_transaction_t t = {
         .length = 8,
@@ -49,7 +63,7 @@ static inline esp_err_t st7789_send_cmd(uint8_t cmd) {
     return spi_device_transmit(g_lcd.spi, &t);
 }
 
-static inline esp_err_t st7789_send_data(const void *data, int len) {
+static inline esp_err_t st7735_send_data(const void *data, int len) {
     if (len <= 0) {
         return ESP_OK;
     }
@@ -61,32 +75,32 @@ static inline esp_err_t st7789_send_data(const void *data, int len) {
     return spi_device_transmit(g_lcd.spi, &t);
 }
 
-static void st7789_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+static void st7735_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     uint8_t data[4];
 
-    st7789_send_cmd(ST7789_CMD_CASET);
+    st7735_send_cmd(ST7735_CMD_CASET);
     data[0] = (x0 >> 8) & 0xFF;
     data[1] = x0 & 0xFF;
     data[2] = (x1 >> 8) & 0xFF;
     data[3] = x1 & 0xFF;
-    st7789_send_data(data, 4);
+    st7735_send_data(data, 4);
 
-    st7789_send_cmd(ST7789_CMD_RASET);
+    st7735_send_cmd(ST7735_CMD_RASET);
     data[0] = (y0 >> 8) & 0xFF;
     data[1] = y0 & 0xFF;
     data[2] = (y1 >> 8) & 0xFF;
     data[3] = y1 & 0xFF;
-    st7789_send_data(data, 4);
+    st7735_send_data(data, 4);
 
-    st7789_send_cmd(ST7789_CMD_RAMWR);
+    st7735_send_cmd(ST7735_CMD_RAMWR);
 }
 
-static esp_err_t st7789_init(void) {
+static esp_err_t st7735_init(void) {
     esp_err_t ret;
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = PIN_NUM_MOSI,
-        。miso_io_num = -1,
+        .miso_io_num = -1,
         .sclk_io_num = PIN_NUM_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
@@ -119,30 +133,82 @@ static esp_err_t st7789_init(void) {
     gpio_set_level(PIN_NUM_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    st7789_send_cmd(ST7789_CMD_SWRESET);
+    st7735_send_cmd(ST7735_CMD_SWRESET);
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    st7735_send_cmd(ST7735_CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(120));
 
-    st7789_send_cmd(ST7789_CMD_SLPOUT);
-    vTaskDelay(pdMS_TO_TICKS(120));
+    const uint8_t frmctr1[] = {0x01, 0x2C, 0x2D};
+    st7735_send_cmd(ST7735_CMD_FRMCTR1);
+    st7735_send_data(frmctr1, sizeof(frmctr1));
 
-    uint8_t colmod = 0x55; // RGB565
-    st7789_send_cmd(ST7789_CMD_COLMOD);
-    st7789_send_data(&colmod, 1);
+    const uint8_t frmctr2[] = {0x01, 0x2C, 0x2D};
+    st7735_send_cmd(ST7735_CMD_FRMCTR2);
+    st7735_send_data(frmctr2, sizeof(frmctr2));
 
-    uint8_t madctl = 0x00; // 可按实际屏幕方向调整
-    st7789_send_cmd(ST7789_CMD_MADCTL);
-    st7789_send_data(&madctl, 1);
+    const uint8_t frmctr3[] = {0x01, 0x2C, 0x2D, 0x01, 0x2C, 0x2D};
+    st7735_send_cmd(ST7735_CMD_FRMCTR3);
+    st7735_send_data(frmctr3, sizeof(frmctr3));
 
-    st7789_send_cmd(ST7789_CMD_INVON);
-    st7789_send_cmd(ST7789_CMD_DISPON);
-    vTaskDelay(pdMS_TO_TICKS(20));
+    uint8_t invctr = 0x07;
+    st7735_send_cmd(ST7735_CMD_INVCTR);
+    st7735_send_data(&invctr, 1);
+
+    const uint8_t pwctr1[] = {0xA2, 0x02, 0x84};
+    st7735_send_cmd(ST7735_CMD_PWCTR1);
+    st7735_send_data(pwctr1, sizeof(pwctr1));
+
+    uint8_t pwctr2 = 0xC5;
+    st7735_send_cmd(ST7735_CMD_PWCTR2);
+    st7735_send_data(&pwctr2, 1);
+
+    const uint8_t pwctr3[] = {0x0A, 0x00};
+    st7735_send_cmd(ST7735_CMD_PWCTR3);
+    st7735_send_data(pwctr3, sizeof(pwctr3));
+
+    const uint8_t pwctr4[] = {0x8A, 0x2A};
+    st7735_send_cmd(ST7735_CMD_PWCTR4);
+    st7735_send_data(pwctr4, sizeof(pwctr4));
+
+    const uint8_t pwctr5[] = {0x8A, 0xEE};
+    st7735_send_cmd(ST7735_CMD_PWCTR5);
+    st7735_send_data(pwctr5, sizeof(pwctr5));
+
+    uint8_t vmctr1 = 0x0E;
+    st7735_send_cmd(ST7735_CMD_VMCTR1);
+    st7735_send_data(&vmctr1, 1);
+
+    st7735_send_cmd(ST7735_CMD_INVOFF);
+
+    uint8_t madctl = 0x00;
+    st7735_send_cmd(ST7735_CMD_MADCTL);
+    st7735_send_data(&madctl, 1);
+
+    uint8_t colmod = 0x05; // RGB565 (16-bit)
+    st7735_send_cmd(ST7735_CMD_COLMOD);
+    st7735_send_data(&colmod, 1);
+
+    const uint8_t gmctrp1[] = {0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D, 0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10};
+    st7735_send_cmd(ST7735_CMD_GMCTRP1);
+    st7735_send_data(gmctrp1, sizeof(gmctrp1));
+
+    const uint8_t gmctrn1[] = {0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D, 0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10};
+    st7735_send_cmd(ST7735_CMD_GMCTRN1);
+    st7735_send_data(gmctrn1, sizeof(gmctrn1));
+
+    st7735_send_cmd(ST7735_CMD_NORON);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    st7735_send_cmd(ST7735_CMD_DISPON);
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     gpio_set_level(PIN_NUM_BCKL, 1);
-    ESP_LOGI(TAG, "ST7789 init done");
+    ESP_LOGI(TAG, "ST7735 init done (128x160)");
     return ESP_OK;
 }
 
-static void st7789_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
+static void st7735_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
     if (x >= LCD_H_RES || y >= LCD_V_RES) {
         return;
     }
@@ -153,7 +219,7 @@ static void st7789_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uin
         h = LCD_V_RES - y;
     }
 
-    st7789_set_window(x, y, x + w - 1, y + h - 1);
+    st7735_set_window(x, y, x + w - 1, y + h - 1);
 
     const int pixels = w * h;
     static uint16_t line_buf[128];
@@ -168,13 +234,13 @@ static void st7789_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uin
         for (int i = 0; i < batch; ++i) {
             line_buf[i] = be;
         }
-        st7789_send_data(line_buf, batch * sizeof(uint16_t));
+        st7735_send_data(line_buf, batch * sizeof(uint16_t));
         idx += batch;
     }
 }
 
-static inline void st7789_clear(uint16_t color) {
-    st7789_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
+static inline void st7735_clear(uint16_t color) {
+    st7735_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
 }
 
 // ========== 俄罗斯方块逻辑 ==========
@@ -251,9 +317,9 @@ static const uint8_t tetromino[7][4][4][4] = {
 static void draw_cell(int bx, int by, uint16_t color) {
     int x = OFFSET_X + bx * CELL_SIZE;
     int y = OFFSET_Y + by * CELL_SIZE;
-    st7789_fill_rect(x, y, CELL_SIZE - 1, CELL_SIZE - 1, color);
-    st7789_fill_rect(x + CELL_SIZE - 1, y, 1, CELL_SIZE, COLOR_GRID);
-    st7789_fill_rect(x, y + CELL_SIZE - 1, CELL_SIZE, 1, COLOR_GRID);
+    st7735_fill_rect(x, y, CELL_SIZE - 1, CELL_SIZE - 1, color);
+    st7735_fill_rect(x + CELL_SIZE - 1, y, 1, CELL_SIZE, COLOR_GRID);
+    st7735_fill_rect(x, y + CELL_SIZE - 1, CELL_SIZE, 1, COLOR_GRID);
 }
 
 static bool collision(const piece_t *p, int nx, int ny, int nrot) {
@@ -349,7 +415,7 @@ static void render(void) {
 
 static void game_task(void *arg) {
     (void)arg;
-    st7789_clear(COLOR_BG);
+    st7735_clear(COLOR_BG);
     memset(board, 0, sizeof(board));
     spawn_piece();
 
@@ -392,6 +458,6 @@ static void game_task(void *arg) {
 }
 
 void app_main(void) {
-    ESP_ERROR_CHECK(st7789_init());
+    ESP_ERROR_CHECK(st7735_init());
     xTaskCreate(game_task, "game_task", 4096, NULL, 5, NULL);
 }
