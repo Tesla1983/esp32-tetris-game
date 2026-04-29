@@ -1,25 +1,67 @@
-name: ESP32 Build
+name: ESP32 Multi-Chip Build & Release
 
 on:
   push:
+    branches: [ "main" ]
+    tags: [ "v*" ] # 当你推送 v1.0 等标签时触发 Release
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    strategy:
+      matrix:
+        # 同时编译 ESP32 和 ESP32-S3
+        idf_target: [ "esp32", "esp32s3" ]
+    
+    container: espressif/idf:release-v5.3 # 使用官方镜像，免去安装 IDF 的时间
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
 
-      - name: Install ESP-IDF
+      - name: Cache Build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build
+            managed_components
+          key: ${{ runner.os }}-${{ matrix.idf_target }}-cache-${{ hashFiles('**/CMakeLists.txt', 'sdkconfig*') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.idf_target }}-cache-
+
+      - name: Build with idf.py
         run: |
-          git clone --recursive https://github.com/espressif/esp-idf.git
-          cd esp-idf
-          ./install.sh esp32
-          
-      - name: Build project
-        run: |
-          . ./esp-idf/export.sh
+          . /opt/esp/idf/export.sh
+          idf.py set-target ${{ matrix.idf_target }}
           idf.py build
+          # 重命名固件方便识别
+          mv build/project_name.bin build/tetris_${{ matrix.idf_target }}.bin || mv build/*.bin build/tetris_${{ matrix.idf_target }}.bin
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.idf_target }}
+          path: build/tetris_${{ matrix.idf_target }}.bin
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') # 仅在有版本标签时运行
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: firmware-dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: firmware-dist/*.bin
+          body: "ESP32 俄罗斯方块自动构建固件 - 支持 ESP32/S3"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
