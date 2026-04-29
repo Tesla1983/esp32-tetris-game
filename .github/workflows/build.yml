@@ -3,18 +3,23 @@ name: ESP32 Build
 on:
   push:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v6.0
-
-      - run: idf.py build
+      - name: Install ESP-IDF
+        run: |
+          git clone --recursive https://github.com/espressif/esp-idf.git
+          cd esp-idf
+          ./install.sh esp32
+          
+      - name: Build project
+        run: |
+          . ./esp-idf/export.sh
+          idf.py build
