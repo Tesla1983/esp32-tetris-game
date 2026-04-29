@@ -40,6 +40,7 @@ jobs:
       - name: Build with idf.py
         run: |
           . /opt/esp/idf/export.sh
+          idf.py --version
           idf.py set-target ${{ matrix.idf_target }}
           idf.py build
           # 寻找生成的 bin 文件并重命名，防止上传时名字重复
