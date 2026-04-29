@@ -44,7 +44,7 @@ jobs:
           idf.py set-target ${{ matrix.idf_target }}
           idf.py build
           # 寻找生成的 bin 文件并重命名，防止上传时名字重复
-           find build -maxdepth 1 -name "*.bin" ! -name "bootloader.bin" ! -name "partition-table.bin" -exec mv {} build/tetris_${{ github.ref_name }}_${{ matrix.idf_target }}.bin \;
+           find build -maxdepth 1 -name "*.bin" ! -name "bootloader.bin" ! -name "partition-table.bin" -exec mv {} build/tetris_${{ matrix.idf_target }}.bin \;
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
