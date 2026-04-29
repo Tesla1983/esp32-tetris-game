@@ -71,4 +71,4 @@ source ~/esp/esp-idf/export.sh
 2. 若画面颜色异常，通常是字节序或颜色格式设置问题（`COLMOD=0x55` 对应 RGB565）。
 3. 若你使用 ESP32-S3/ESP32-C3，SPI Host 与引脚可按芯片资源调整。
 
-- <img width="480" height="853" alt="mnggiflab-compressed-mnggiflab-from-video-to-gif-2026_04_29_17_37_52" src="https://github.com/user-attachments/assets/9e80d106-278b-461f-a60e-1b20e4c1fd49" />
+
