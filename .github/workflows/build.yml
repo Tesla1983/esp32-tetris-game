@@ -15,6 +15,6 @@ jobs:
 
       - uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.2
+          esp_idf_version: v6.0
 
       - run: idf.py build
