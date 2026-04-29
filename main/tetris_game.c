@@ -86,7 +86,7 @@ static esp_err_t st7789_init(void) {
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = PIN_NUM_MOSI,
-        .miso_io_num = -1,
+        。miso_io_num = -1,
         .sclk_io_num = PIN_NUM_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
@@ -181,8 +181,8 @@ static inline void st7789_clear(uint16_t color) {
 #define BOARD_W 10
 #define BOARD_H 20
 
-#define CELL_SIZE 8
-#define OFFSET_X 8
+#define CELL_SIZE 12
+#define OFFSET_X 4
 #define OFFSET_Y 0
 
 #define COLOR_BG 0x0000
