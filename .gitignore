@@ -2,4 +2,5 @@ build/
 sdkconfig.old
 .vscode/*
 !.vscode/launch.json
-
+.cache/*
+.clang-format
