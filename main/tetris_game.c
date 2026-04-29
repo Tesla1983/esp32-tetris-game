@@ -12,12 +12,12 @@
 
 // ========== ST7789 + 屏幕配置 ==========
 #define LCD_HOST SPI2_HOST
-#define PIN_NUM_MOSI 23
-#define PIN_NUM_CLK 18
-#define PIN_NUM_CS 5
-#define PIN_NUM_DC 2
+#define PIN_NUM_MOSI 2
+#define PIN_NUM_CLK 15
+#define PIN_NUM_CS 17
+#define PIN_NUM_DC 16
 #define PIN_NUM_RST 4
-#define PIN_NUM_BCKL 15
+#define PIN_NUM_BCKL 5
 
 #define LCD_H_RES 128
 #define LCD_V_RES 160

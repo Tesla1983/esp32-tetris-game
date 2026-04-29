@@ -16,12 +16,12 @@
 
 在 `main/tetris_game.c` 顶部宏定义中配置：
 
-- `MOSI = GPIO23`
-- `SCLK = GPIO18`
-- `CS   = GPIO5`
-- `DC   = GPIO2`
+- `MOSI(SDA) = GPIO2`
+- `SCLK(SCL) = GPIO15`
+- `CS        = GPIO17`
+- `DC        = GPIO16`
 - `RST  = GPIO4`
-- `BCKL = GPIO15`
+- `BCKL(BLK) = GPIO5`
 
 ## 构建与烧录
 
