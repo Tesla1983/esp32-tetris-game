@@ -76,28 +76,17 @@ static inline esp_err_t st7735_send_data(const void *data, int len) {
 }
 
 static void st7735_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    uint8_t data[4];
-
-    uint16_t x_offset = 2;
-    uint16_t y_offset = 1;
-    
-    x0 += x_offset; x1 += x_offset;
-    y0 += y_offset; y1 += y_offset;
-
     st7735_send_cmd(ST7735_CMD_CASET);
-    data[0] = (x0 >> 8) & 0xFF;
-    data[1] = x0 & 0xFF;
-    data[2] = (x1 >> 8) & 0xFF;
-    data[3] = x1 & 0xFF;
+    uint8_t data[4];
+    data[0] = (x0 >> 8) & 0xFF; data[1] = x0 & 0xFF;
+    data[2] = (x1 >> 8) & 0xFF; data[3] = x1 & 0xFF;
     st7735_send_data(data, 4);
-
+    
     st7735_send_cmd(ST7735_CMD_RASET);
-    data[0] = (y0 >> 8) & 0xFF;
-    data[1] = y0 & 0xFF;
-    data[2] = (y1 >> 8) & 0xFF;
-    data[3] = y1 & 0xFF;
+    data[0] = (y0 >> 8) & 0xFF; data[1] = y0 & 0xFF;
+    data[2] = (y1 >> 8) & 0xFF; data[3] = y1 & 0xFF;
     st7735_send_data(data, 4);
-
+    
     st7735_send_cmd(ST7735_CMD_RAMWR);
 }
 
