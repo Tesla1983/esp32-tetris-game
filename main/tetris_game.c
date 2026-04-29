@@ -54,6 +54,7 @@ typedef struct {
 static const char *TAG = "tetris";
 static st7735_dev_t g_lcd;
 
+// ========== 底层 SPI 驱动（必须放前面） ==========
 static inline esp_err_t st7735_send_cmd(uint8_t cmd) {
     gpio_set_level(PIN_NUM_DC, 0);
     spi_transaction_t t = {
@@ -64,9 +65,7 @@ static inline esp_err_t st7735_send_cmd(uint8_t cmd) {
 }
 
 static inline esp_err_t st7735_send_data(const void *data, int len) {
-    if (len <= 0) {
-        return ESP_OK;
-    }
+    if (len <= 0) return ESP_OK;
     gpio_set_level(PIN_NUM_DC, 1);
     spi_transaction_t t = {
         .length = len * 8,
@@ -78,18 +77,56 @@ static inline esp_err_t st7735_send_data(const void *data, int len) {
 static void st7735_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     st7735_send_cmd(ST7735_CMD_CASET);
     uint8_t data[4];
-    data[0] = (x0 >> 8) & 0xFF; data[1] = x0 & 0xFF;
-    data[2] = (x1 >> 8) & 0xFF; data[3] = x1 & 0xFF;
+    data[0] = (x0 >> 8) & 0xFF;
+    data[1] = x0 & 0xFF;
+    data[2] = (x1 >> 8) & 0xFF;
+    data[3] = x1 & 0xFF;
     st7735_send_data(data, 4);
-    
+
     st7735_send_cmd(ST7735_CMD_RASET);
-    data[0] = (y0 >> 8) & 0xFF; data[1] = y0 & 0xFF;
-    data[2] = (y1 >> 8) & 0xFF; data[3] = y1 & 0xFF;
+    data[0] = (y0 >> 8) & 0xFF;
+    data[1] = y0 & 0xFF;
+    data[2] = (y1 >> 8) & 0xFF;
+    data[3] = y1 & 0xFF;
     st7735_send_data(data, 4);
-    
+
     st7735_send_cmd(ST7735_CMD_RAMWR);
 }
 
+// ========== 帧缓冲（消除闪烁） ==========
+static uint16_t framebuffer[LCD_V_RES][LCD_H_RES];  // 大端 RGB565
+
+static void fb_fill_rect(int x, int y, int w, int h, uint16_t color_be) {
+    if (x >= LCD_H_RES || y >= LCD_V_RES) return;
+    if (x + w > LCD_H_RES) w = LCD_H_RES - x;
+    if (y + h > LCD_V_RES) h = LCD_V_RES - y;
+    for (int i = 0; i < h; ++i) {
+        for (int j = 0; j < w; ++j) {
+            framebuffer[y + i][x + j] = color_be;
+        }
+    }
+}
+
+static inline void fb_draw_pixel(int x, int y, uint16_t color_be) {
+    if (x >= 0 && x < LCD_H_RES && y >= 0 && y < LCD_V_RES) {
+        framebuffer[y][x] = color_be;
+    }
+}
+
+static inline void fb_clear(uint16_t color_be) {
+    for (int y = 0; y < LCD_V_RES; ++y) {
+        for (int x = 0; x < LCD_H_RES; ++x) {
+            framebuffer[y][x] = color_be;
+        }
+    }
+}
+
+static void fb_flush(void) {
+    st7735_set_window(0, 0, LCD_H_RES - 1, LCD_V_RES - 1);
+    st7735_send_data((uint8_t *)framebuffer, LCD_H_RES * LCD_V_RES * 2);
+}
+
+// ========== ST7735 初始化 ==========
 static esp_err_t st7735_init(void) {
     esp_err_t ret;
 
@@ -114,14 +151,10 @@ static esp_err_t st7735_init(void) {
     ESP_ERROR_CHECK(gpio_set_direction(PIN_NUM_BCKL, GPIO_MODE_OUTPUT));
 
     ret = spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO);
-    if (ret != ESP_OK) {
-        return ret;
-    }
+    if (ret != ESP_OK) return ret;
 
     ret = spi_bus_add_device(LCD_HOST, &devcfg, &g_lcd.spi);
-    if (ret != ESP_OK) {
-        return ret;
-    }
+    if (ret != ESP_OK) return ret;
 
     gpio_set_level(PIN_NUM_RST, 0);
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -130,7 +163,6 @@ static esp_err_t st7735_init(void) {
 
     st7735_send_cmd(ST7735_CMD_SWRESET);
     vTaskDelay(pdMS_TO_TICKS(150));
-
     st7735_send_cmd(ST7735_CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(120));
 
@@ -176,19 +208,21 @@ static esp_err_t st7735_init(void) {
 
     st7735_send_cmd(ST7735_CMD_INVOFF);
 
-    uint8_t madctl = 0xc0;
+    uint8_t madctl = 0xC0;  // 180度旋转（MX+MY），无白边
     st7735_send_cmd(ST7735_CMD_MADCTL);
     st7735_send_data(&madctl, 1);
 
-    uint8_t colmod = 0x05; // RGB565 (16-bit)
+    uint8_t colmod = 0x05;  // RGB565
     st7735_send_cmd(ST7735_CMD_COLMOD);
     st7735_send_data(&colmod, 1);
 
-    const uint8_t gmctrp1[] = {0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D, 0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10};
+    const uint8_t gmctrp1[] = {0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D,
+                               0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10};
     st7735_send_cmd(ST7735_CMD_GMCTRP1);
     st7735_send_data(gmctrp1, sizeof(gmctrp1));
 
-    const uint8_t gmctrn1[] = {0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D, 0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10};
+    const uint8_t gmctrn1[] = {0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D,
+                               0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10};
     st7735_send_cmd(ST7735_CMD_GMCTRN1);
     st7735_send_data(gmctrn1, sizeof(gmctrn1));
 
@@ -203,60 +237,25 @@ static esp_err_t st7735_init(void) {
     return ESP_OK;
 }
 
-static void st7735_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color) {
-    if (x >= LCD_H_RES || y >= LCD_V_RES) {
-        return;
-    }
-    if (x + w > LCD_H_RES) {
-        w = LCD_H_RES - x;
-    }
-    if (y + h > LCD_V_RES) {
-        h = LCD_V_RES - y;
-    }
-
-    st7735_set_window(x, y, x + w - 1, y + h - 1);
-
-    const int pixels = w * h;
-    static uint16_t line_buf[128];
-    const uint16_t be = (uint16_t)((color << 8) | (color >> 8));
-
-    int idx = 0;
-    while (idx < pixels) {
-        int batch = pixels - idx;
-        if (batch > (int)(sizeof(line_buf) / sizeof(line_buf[0]))) {
-            batch = sizeof(line_buf) / sizeof(line_buf[0]);
-        }
-        for (int i = 0; i < batch; ++i) {
-            line_buf[i] = be;
-        }
-        st7735_send_data(line_buf, batch * sizeof(uint16_t));
-        idx += batch;
-    }
-}
-
-static inline void st7735_clear(uint16_t color) {
-    st7735_fill_rect(0, 0, LCD_H_RES, LCD_V_RES, color);
-}
-
 // ========== 俄罗斯方块逻辑 ==========
 #define BOARD_W 10
 #define BOARD_H 13
 
 #define CELL_SIZE 12
-#define OFFSET_X 4
-#define OFFSET_Y 2
+#define OFFSET_X (((LCD_H_RES - BOARD_W * CELL_SIZE) / 2))
+#define OFFSET_Y (((LCD_V_RES - BOARD_H * CELL_SIZE) / 2))
 
-#define COLOR_BG 0x0000
-#define COLOR_GRID 0x2104
+#define COLOR_BG 0xFFFF    // 白色
+#define COLOR_GRID 0xCE79  // 灰色网格线
 
 static const uint16_t piece_colors[7] = {
-    0x07FF, // I
-    0xFFE0, // O
-    0xF81F, // T
-    0x07E0, // S
-    0xF800, // Z
-    0x001F, // J
-    0xFD20, // L
+    0x07FF,  // I
+    0xFFE0,  // O
+    0xF81F,  // T
+    0x07E0,  // S
+    0xF800,  // Z
+    0x001F,  // J
+    0xFD20,  // L
 };
 
 static uint8_t board[BOARD_H][BOARD_W];
@@ -273,64 +272,58 @@ static piece_t cur;
 // 7种方块，4个旋转状态，4x4矩阵
 static const uint8_t tetromino[7][4][4][4] = {
     // I
-    {{{0,0,0,0},{1,1,1,1},{0,0,0,0},{0,0,0,0}},
-     {{0,0,1,0},{0,0,1,0},{0,0,1,0},{0,0,1,0}},
-     {{0,0,0,0},{1,1,1,1},{0,0,0,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,0,0},{0,1,0,0},{0,1,0,0}}},
+    {{{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 0, 1, 0}, {0, 0, 1, 0}, {0, 0, 1, 0}, {0, 0, 1, 0}},
+     {{0, 0, 0, 0}, {1, 1, 1, 1}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 0, 0}, {0, 1, 0, 0}, {0, 1, 0, 0}}},
     // O
-    {{{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,1,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}}},
+    {{{0, 1, 1, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 1, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 1, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 1, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}},
     // T
-    {{{0,1,0,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,1,0},{0,1,0,0},{0,0,0,0}},
-     {{0,0,0,0},{1,1,1,0},{0,1,0,0},{0,0,0,0}},
-     {{0,1,0,0},{1,1,0,0},{0,1,0,0},{0,0,0,0}}},
+    {{{0, 1, 0, 0}, {1, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}},
+     {{0, 0, 0, 0}, {1, 1, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {1, 1, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}}},
     // S
-    {{{0,1,1,0},{1,1,0,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,1,0},{0,0,1,0},{0,0,0,0}},
-     {{0,1,1,0},{1,1,0,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,1,0},{0,0,1,0},{0,0,0,0}}},
+    {{{0, 1, 1, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 1, 0}, {0, 0, 1, 0}, {0, 0, 0, 0}},
+     {{0, 1, 1, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 1, 0}, {0, 0, 1, 0}, {0, 0, 0, 0}}},
     // Z
-    {{{1,1,0,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,0,1,0},{0,1,1,0},{0,1,0,0},{0,0,0,0}},
-     {{1,1,0,0},{0,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,0,1,0},{0,1,1,0},{0,1,0,0},{0,0,0,0}}},
+    {{{1, 1, 0, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 0, 1, 0}, {0, 1, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}},
+     {{1, 1, 0, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 0, 1, 0}, {0, 1, 1, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}}},
     // J
-    {{{1,0,0,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,1,0},{0,1,0,0},{0,1,0,0},{0,0,0,0}},
-     {{0,0,0,0},{1,1,1,0},{0,0,1,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,0,0},{1,1,0,0},{0,0,0,0}}},
+    {{{1, 0, 0, 0}, {1, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 1, 0}, {0, 1, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}},
+     {{0, 0, 0, 0}, {1, 1, 1, 0}, {0, 0, 1, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 0, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}}},
     // L
-    {{{0,0,1,0},{1,1,1,0},{0,0,0,0},{0,0,0,0}},
-     {{0,1,0,0},{0,1,0,0},{0,1,1,0},{0,0,0,0}},
-     {{0,0,0,0},{1,1,1,0},{1,0,0,0},{0,0,0,0}},
-     {{1,1,0,0},{0,1,0,0},{0,1,0,0},{0,0,0,0}}},
+    {{{0, 0, 1, 0}, {1, 1, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}},
+     {{0, 1, 0, 0}, {0, 1, 0, 0}, {0, 1, 1, 0}, {0, 0, 0, 0}},
+     {{0, 0, 0, 0}, {1, 1, 1, 0}, {1, 0, 0, 0}, {0, 0, 0, 0}},
+     {{1, 1, 0, 0}, {0, 1, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}}},
 };
 
 static void draw_cell(int bx, int by, uint16_t color) {
     int x = OFFSET_X + bx * CELL_SIZE;
     int y = OFFSET_Y + by * CELL_SIZE;
-    st7735_fill_rect(x, y, CELL_SIZE - 1, CELL_SIZE - 1, color);
-    st7735_fill_rect(x + CELL_SIZE - 1, y, 1, CELL_SIZE, COLOR_GRID);
-    st7735_fill_rect(x, y + CELL_SIZE - 1, CELL_SIZE, 1, COLOR_GRID);
+    fb_fill_rect(x, y, CELL_SIZE - 1, CELL_SIZE - 1, color);
+    fb_fill_rect(x + CELL_SIZE - 1, y, 1, CELL_SIZE, COLOR_GRID);
+    fb_fill_rect(x, y + CELL_SIZE - 1, CELL_SIZE, 1, COLOR_GRID);
 }
 
 static bool collision(const piece_t *p, int nx, int ny, int nrot) {
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
-            if (!tetromino[p->type][nrot][r][c]) {
-                continue;
-            }
+            if (!tetromino[p->type][nrot][r][c]) continue;
             int x = nx + c;
             int y = ny + r;
-            if (x < 0 || x >= BOARD_W || y >= BOARD_H) {
-                return true;
-            }
-            if (y >= 0 && board[y][x]) {
-                return true;
-            }
+            if (x < 0 || x >= BOARD_W || y >= BOARD_H) return true;
+            if (y >= 0 && board[y][x]) return true;
         }
     }
     return false;
@@ -359,13 +352,10 @@ static void clear_lines(void) {
                 break;
             }
         }
-
         if (full) {
-            for (int yy = y; yy > 0; --yy) {
-                memcpy(board[yy], board[yy - 1], BOARD_W);
-            }
+            for (int yy = y; yy > 0; --yy) memcpy(board[yy], board[yy - 1], BOARD_W);
             memset(board[0], 0, BOARD_W);
-            y++;
+            y++;  // 重新检查当前行
         }
     }
 }
@@ -373,28 +363,24 @@ static void clear_lines(void) {
 static void spawn_piece(void) {
     static uint32_t seed = 0x12345678;
     seed = seed * 1664525u + 1013904223u;
-
     cur.type = seed % 7;
     cur.rot = 0;
     cur.x = 3;
     cur.y = -1;
-
     if (collision(&cur, cur.x, cur.y, cur.rot)) {
         memset(board, 0, sizeof(board));
     }
 }
 
 static void render(void) {
+    fb_clear(COLOR_BG);
     for (int y = 0; y < BOARD_H; ++y) {
         for (int x = 0; x < BOARD_W; ++x) {
-            uint16_t color = COLOR_BG;
             if (board[y][x]) {
-                color = piece_colors[board[y][x] - 1];
+                draw_cell(x, y, piece_colors[board[y][x] - 1]);
             }
-            draw_cell(x, y, color);
         }
     }
-
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 4; ++c) {
             if (tetromino[cur.type][cur.rot][r][c]) {
@@ -406,37 +392,31 @@ static void render(void) {
             }
         }
     }
+    fb_flush();
 }
+
+static int fall_speed = 6;
 
 static void game_task(void *arg) {
     (void)arg;
-    st7735_clear(COLOR_BG);
     memset(board, 0, sizeof(board));
     spawn_piece();
+    render();
 
     int tick = 0;
     while (1) {
-        // 简单自动演示：
-        // 1) 定时下落
-        // 2) 每隔一段时间随机左右移动并尝试旋转
-        if ((tick % 3) == 0) {
-            int test_x = cur.x;
-            int test_r = cur.rot;
+        if ((tick % 30) == 0) {  // 旋转和移动独立于下落速度，每个 tick
+                                 // 都检查一次旋转和左右移动的输入（这里用自动模拟，实际应用中应替换为按键输入）
+            int test_r = (cur.rot + 1) & 3;
+            if (!collision(&cur, cur.x, cur.y, test_r)) cur.rot = test_r;
+        }
+        if ((tick % 10) == 0) {  // 删除或注释这段自动左右移动的代码，改为手动控制
+            int dir = ((tick / 10) & 1) ? 1 : -1;
+            int test_x = cur.x + dir;
+            if (!collision(&cur, test_x, cur.y, cur.rot)) cur.x = test_x;
+        }
 
-            if ((tick % 30) == 0) {
-                test_r = (cur.rot + 1) & 3;
-                if (!collision(&cur, cur.x, cur.y, test_r)) {
-                    cur.rot = test_r;
-                }
-            }
-
-            if ((tick % 10) == 0) {
-                test_x = cur.x + (((tick / 10) & 1) ? 1 : -1);
-                if (!collision(&cur, test_x, cur.y, cur.rot)) {
-                    cur.x = test_x;
-                }
-            }
-
+        if ((tick % fall_speed) == 0) {  // 下落速度由 fall_speed 控制，每 fall_speed 个 tick 下落一次
             if (!collision(&cur, cur.x, cur.y + 1, cur.rot)) {
                 cur.y++;
             } else {
@@ -444,9 +424,9 @@ static void game_task(void *arg) {
                 clear_lines();
                 spawn_piece();
             }
+            render();  // 下落后刷新
         }
 
-        render();
         tick++;
         vTaskDelay(pdMS_TO_TICKS(50));
     }
@@ -454,5 +434,7 @@ static void game_task(void *arg) {
 
 void app_main(void) {
     ESP_ERROR_CHECK(st7735_init());
+    fb_clear(COLOR_BG);
+    fb_flush();
     xTaskCreate(game_task, "game_task", 4096, NULL, 5, NULL);
 }
