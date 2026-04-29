@@ -1,6 +1,6 @@
 name: ESP32 Build
 
-on:
+于:
   push:
   pull_request:
 
@@ -25,3 +25,5 @@ jobs:
         with:
           name: esp32-firmware
           path: build/*.bin
+          env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
