@@ -90,7 +90,7 @@ esp_err_t st7735_init(void) {
                                .max_transfer_sz = ST7735_H_RES * ST7735_V_RES * 2 + 8};
 
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 20 * 1000 * 1000, .mode = 0, .spics_io_num = PIN_NUM_CS, .queue_size = 2};
+        .clock_speed_hz = 25 * 1000 * 1000, .mode = 0, .spics_io_num = PIN_NUM_CS, .queue_size = 2};
 
     ESP_ERROR_CHECK(gpio_set_direction(PIN_NUM_DC, GPIO_MODE_OUTPUT));
     ESP_ERROR_CHECK(gpio_set_direction(PIN_NUM_RST, GPIO_MODE_OUTPUT));

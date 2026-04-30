@@ -4,8 +4,12 @@
 
 #include "drivers/st7735.h"
 #include "esp_err.h"
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+static const char *TAG = "TETRIS";
 
 static uint16_t framebuffer[ST7735_V_RES][ST7735_H_RES];
 
@@ -24,7 +28,106 @@ static inline void fb_clear(uint16_t color_be) {
     }
 }
 
-static void fb_flush(void) { ESP_ERROR_CHECK(st7735_draw_frame((uint16_t *)framebuffer, ST7735_H_RES, ST7735_V_RES)); }
+// ==================== 帧数监控结构 ====================
+typedef struct {
+    int64_t start_time;          // 监控周期开始时间 (微秒)
+    uint32_t frame_count;        // 帧计数
+    uint32_t current_fps;        // 当前 FPS
+    uint32_t max_fps;            // 最大 FPS
+    uint32_t min_fps;            // 最小 FPS
+    uint64_t total_frames;       // 总帧数
+    uint64_t total_render_time;  // 总渲染耗时 (微秒)
+    uint32_t max_frame_time;     // 单帧最大耗时 (微秒)
+    uint32_t min_frame_time;     // 单帧最小耗时 (微秒)
+} fps_monitor_t;
+
+static fps_monitor_t fps_monitor = {.start_time = 0,
+                                    .frame_count = 0,
+                                    .current_fps = 0,
+                                    .max_fps = 0,
+                                    .min_fps = UINT32_MAX,
+                                    .total_frames = 0,
+                                    .total_render_time = 0,
+                                    .max_frame_time = 0,
+                                    .min_frame_time = UINT32_MAX};
+
+static int64_t render_start_time = 0;
+
+/**
+ * @brief 初始化帧数监控
+ */
+static void fps_monitor_init(void) {
+    fps_monitor.start_time = esp_timer_get_time();
+    fps_monitor.frame_count = 0;
+    fps_monitor.current_fps = 0;
+    fps_monitor.max_fps = 0;
+    fps_monitor.min_fps = UINT32_MAX;
+    fps_monitor.total_frames = 0;
+    fps_monitor.total_render_time = 0;
+    fps_monitor.max_frame_time = 0;
+    fps_monitor.min_frame_time = UINT32_MAX;
+    ESP_LOGI(TAG, "FPS Monitor initialized (Display: %d x %d, Total bytes/frame: %d)", ST7735_H_RES, ST7735_V_RES,
+             ST7735_H_RES * ST7735_V_RES * 2);
+}
+
+/**
+ * @brief 标记渲染开始
+ */
+static inline void fps_render_start(void) { render_start_time = esp_timer_get_time(); }
+
+/**
+ * @brief 标记渲染结束并更新统计
+ */
+static void fps_render_end(void) {
+    int64_t current_time = esp_timer_get_time();
+    uint32_t frame_time = (uint32_t)(current_time - render_start_time);
+
+    fps_monitor.frame_count++;
+    fps_monitor.total_frames++;
+    fps_monitor.total_render_time += frame_time;
+
+    // 更新单帧最大和最小耗时
+    if (frame_time > fps_monitor.max_frame_time) {
+        fps_monitor.max_frame_time = frame_time;
+    }
+    if (frame_time < fps_monitor.min_frame_time) {
+        fps_monitor.min_frame_time = frame_time;
+    }
+
+    int64_t elapsed = current_time - fps_monitor.start_time;
+
+    // 每1秒输出一次统计
+    if (elapsed >= 1000000) {  // 1秒 = 1000000微秒
+        fps_monitor.current_fps = (uint32_t)(fps_monitor.frame_count * 1000000 / elapsed);
+        uint32_t avg_frame_time = (uint32_t)(fps_monitor.total_render_time / fps_monitor.frame_count);
+
+        // 更新最大和最小FPS
+        if (fps_monitor.current_fps > fps_monitor.max_fps) {
+            fps_monitor.max_fps = fps_monitor.current_fps;
+        }
+        if (fps_monitor.current_fps < fps_monitor.min_fps && fps_monitor.current_fps > 0) {
+            fps_monitor.min_fps = fps_monitor.current_fps;
+        }
+
+        // 输出详细的性能统计
+        ESP_LOGI(TAG, "当前FPS: %lu | 最大FPS: %lu | 最小FPS: %lu | 平均帧时间: %lu us | 最大帧时间: %lu us | 总帧数: %llu",
+                 fps_monitor.current_fps, fps_monitor.max_fps, fps_monitor.min_fps, avg_frame_time,
+                 fps_monitor.max_frame_time, fps_monitor.total_frames);
+
+        // 重置计数器
+        fps_monitor.frame_count = 0;
+        fps_monitor.total_render_time = 0;
+        fps_monitor.max_frame_time = 0;
+        fps_monitor.min_frame_time = UINT32_MAX;
+        fps_monitor.start_time = current_time;
+    }
+}
+
+static void fb_flush(void) {
+    fps_render_start();
+    ESP_ERROR_CHECK(st7735_draw_frame((uint16_t *)framebuffer, ST7735_H_RES, ST7735_V_RES));
+    fps_render_end();
+}
 
 #define BOARD_W 10
 #define BOARD_H 13
@@ -145,41 +248,55 @@ static void render(void) {
 }
 
 static int fall_speed = 6;
+static int64_t last_game_update = 0;  // 游戏逻辑的最后更新时间
 
 static void game_task(void *arg) {
     (void)arg;
+
+    fps_monitor_init();
+    last_game_update = esp_timer_get_time();
+
     memset(board, 0, sizeof(board));
     spawn_piece();
     render();
-    for (int tick = 0;; ++tick) {
-        if ((tick % 30) == 0) {
-            int test_r = (cur.rot + 1) & 3;
-            if (!collision(&cur, cur.x, cur.y, test_r)) cur.rot = test_r;
-        }
-        if ((tick % 10) == 0) {
-            int dir = ((tick / 10) & 1) ? 1 : -1;
-            int test_x = cur.x + dir;
-            if (!collision(&cur, test_x, cur.y, cur.rot)) cur.x = test_x;
-        }
-        if ((tick % fall_speed) == 0) {
-            if (!collision(&cur, cur.x, cur.y + 1, cur.rot))
-                cur.y++;
-            else {
-                merge_current_piece();
-                clear_lines();
-                spawn_piece();
-            }
-            render();
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-   
-}
 
-void app_main(void) {
-    ESP_ERROR_CHECK(st7735_init());
-    fb_clear(COLOR_BG);
-    fb_flush();
-    xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
-    
+    int tick = 0;
+    for ( ;;) {
+        int64_t now = esp_timer_get_time();
+        // 游戏逻辑更新间隔：50ms 更新一次（20 Hz）
+        if ((now - last_game_update) >= 50000) {  // 50ms = 50000微秒
+            last_game_update = now;
+
+            if ((tick % 30) == 0) { // 每30个tick（即1.5秒）旋转一次
+                int test_r = (cur.rot + 3) & 3;
+                if (!collision(&cur, cur.x, cur.y, test_r)) cur.rot = test_r;
+            }
+            if ((tick % 10) == 0) { // 每10个tick（即0.5秒）左右移动一次
+                int dir = ((tick / 10) & 1) ? 1 : -1;
+                int test_x = cur.x + dir;
+                if (!collision(&cur, test_x, cur.y, cur.rot)) cur.x = test_x;
+            }
+            if ((tick % fall_speed) == 0) { // 每fall_speed个tick（即fall_speed*50ms）下降一次
+                if (!collision(&cur, cur.x, cur.y + 1, cur.rot))
+                    cur.y++;
+                else {
+                    merge_current_piece();
+                    clear_lines();
+                    spawn_piece();
+                }
+            }
+            tick++;
+        }
+
+        // 渲染尽可能快地执行（不受vTaskDelay限制）
+        render();
+        // 每100微秒让出一次CPU，避免完全占用
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
 }
+    void app_main(void) {
+        ESP_ERROR_CHECK(st7735_init());
+        fb_clear(COLOR_BG);
+        fb_flush();
+        xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
+    }

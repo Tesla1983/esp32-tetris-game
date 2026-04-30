@@ -4,6 +4,7 @@ sdkconfig.old
 !.vscode/launch.json
 .cache/*
 .clang-format
-esp-idf/
 .gitignore
 .espressif/*
+esp-idf/
+.esp-idf/
