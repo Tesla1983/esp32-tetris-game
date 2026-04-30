@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_random.h"
 
 static const char *TAG = "TETRIS";
 
@@ -224,9 +225,9 @@ static void clear_lines(void) {
 }
 
 static void spawn_piece(void) {
-    static uint32_t seed = 0x12345678;
-    seed = seed * 1664525u + 1013904223u;
-    cur.type = seed % 7;
+    // static uint32_t seed = 0x12345678;
+    // seed = seed * 1664525u + 1013904223u;
+    cur.type = esp_random() % 7;
     cur.rot = 0;
     cur.x = 3;
     cur.y = -1;
