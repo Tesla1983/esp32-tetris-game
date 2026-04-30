@@ -173,7 +173,7 @@ static void game_task(void *arg) {
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    printf("stack left: %d\n", uxTaskGetStackHighWaterMark(NULL));
+   
 }
 
 void app_main(void) {
