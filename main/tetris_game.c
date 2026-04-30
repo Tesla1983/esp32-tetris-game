@@ -173,11 +173,13 @@ static void game_task(void *arg) {
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
+    printf("stack left: %d\n", uxTaskGetStackHighWaterMark(NULL));
 }
 
 void app_main(void) {
     ESP_ERROR_CHECK(st7735_init());
     fb_clear(COLOR_BG);
     fb_flush();
-    xTaskCreate(game_task, "game_task", 4096, NULL, 5, NULL);
+    xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
+    
 }
