@@ -81,6 +81,26 @@ esp_err_t st7735_draw_frame(const uint16_t *framebuffer, int width, int height) 
     return st7735_send_data((const uint8_t *)framebuffer, ST7735_H_RES * ST7735_V_RES * 2);
 }
 
+
+esp_err_t st7735_draw_region_dma(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                                 const uint16_t *pixels) {
+    if (!pixels || width == 0 || height == 0) return ESP_ERR_INVALID_ARG;
+    if (x + width > ST7735_H_RES || y + height > ST7735_V_RES) return ESP_ERR_INVALID_ARG;
+
+    st7735_set_window(x, y, x + width - 1, y + height - 1);
+    gpio_set_level(PIN_NUM_DC, 1);
+
+    spi_transaction_t t = {0};
+    t.length = width * height * 16;
+    t.tx_buffer = pixels;
+
+    ESP_RETURN_ON_ERROR(spi_device_queue_trans(g_lcd.spi, &t, portMAX_DELAY), TAG, "queue dma trans failed");
+    spi_transaction_t *ret_t = NULL;
+    ESP_RETURN_ON_ERROR(spi_device_get_trans_result(g_lcd.spi, &ret_t, portMAX_DELAY), TAG,
+                        "wait dma trans failed");
+    return ESP_OK;
+}
+
 esp_err_t st7735_init(void) {
     spi_bus_config_t buscfg = {.mosi_io_num = PIN_NUM_MOSI,
                                .miso_io_num = -1,
