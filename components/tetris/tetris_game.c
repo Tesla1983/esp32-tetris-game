@@ -9,24 +9,30 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lvgl.h"
 #include "tetris.h"
+
 
 static const char *TAG = "TETRIS";
 
-static uint16_t framebuffer[ST7735_V_RES][ST7735_H_RES];
+// 双缓冲 framebuffer：渲染一块，DMA 发送另一块
+static uint16_t framebuffers[2][ST7735_V_RES][ST7735_H_RES];
+static int fb_idx = 0;  // 当前渲染缓冲区索引
+#define FB_CURRENT framebuffers[fb_idx]
+#define FB_OTHER   framebuffers[fb_idx ^ 1]
 
 static void fb_fill_rect(int x, int y, int w, int h, uint16_t color_be) {
     if (x >= ST7735_H_RES || y >= ST7735_V_RES) return;
     if (x + w > ST7735_H_RES) w = ST7735_H_RES - x;
     if (y + h > ST7735_V_RES) h = ST7735_V_RES - y;
     for (int i = 0; i < h; ++i) {
-        for (int j = 0; j < w; ++j) framebuffer[y + i][x + j] = color_be;
+        for (int j = 0; j < w; ++j) FB_CURRENT[y + i][x + j] = color_be;
     }
 }
 
 static inline void fb_clear(uint16_t color_be) {
     for (int y = 0; y < ST7735_V_RES; ++y) {
-        for (int x = 0; x < ST7735_H_RES; ++x) framebuffer[y][x] = color_be;
+        for (int x = 0; x < ST7735_H_RES; ++x) FB_CURRENT[y][x] = color_be;
     }
 }
 
@@ -128,8 +134,16 @@ static void fps_render_end(void) {
 
 static void fb_flush(void) {
     fps_render_start();
-    ESP_ERROR_CHECK(st7735_draw_frame((uint16_t *)framebuffer, ST7735_H_RES, ST7735_V_RES));
+    // 先等上一帧 DMA 完成（此时渲染与 DMA 已重叠）
+    st7735_wait_frame();
+    // 启动当前帧的异步 DMA 传输
+    st7735_draw_frame_async((const uint16_t *)FB_CURRENT);
     fps_render_end();
+    // 交换缓冲：下一帧渲染到另一块
+    fb_idx ^= 1;
+    // 更新 LVGL 的绘制缓冲区指向新的当前缓冲区
+    lv_display_set_buffers(lv_disp_get_default(), FB_CURRENT, NULL,
+                           sizeof(FB_CURRENT), LV_DISPLAY_RENDER_MODE_DIRECT);
 }
 
 #define BOARD_W 10
@@ -210,7 +224,8 @@ static void merge_current_piece(void) {
             }
 }
 
-static void clear_lines(void) {
+static int clear_lines(void) {
+    int cleared = 0;
     for (int y = BOARD_H - 1; y >= 0; --y) {
         bool full = true;
         for (int x = 0; x < BOARD_W; ++x)
@@ -221,9 +236,50 @@ static void clear_lines(void) {
         if (full) {
             for (int yy = y; yy > 0; --yy) memcpy(board[yy], board[yy - 1], BOARD_W);
             memset(board[0], 0, BOARD_W);
+            cleared++;
             y++;
         }
     }
+    return cleared;
+}
+
+// ==================== LVGL 分数显示 ====================
+static int score = 0;
+static lv_obj_t *score_label = NULL;
+
+static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
+    // px_map 即 FB_CURRENT，由 fb_flush 统一管理异步 DMA + 缓冲切换
+    fb_flush();
+    lv_display_flush_ready(disp);
+}
+
+static void lvgl_score_init(void) {
+    lv_display_t *disp = lv_display_create(ST7735_H_RES, ST7735_V_RES);
+    lv_display_set_default(disp);
+    lv_display_set_buffers(disp, FB_CURRENT, NULL, sizeof(FB_CURRENT),
+                           LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_flush_cb(disp, lvgl_flush_cb);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+
+    // 屏幕背景透明，让游戏画面透出
+    lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_TRANSP, 0);
+
+    score_label = lv_label_create(lv_scr_act());
+    lv_label_set_text(score_label, "000");
+    lv_obj_set_style_text_color(score_label, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_text_font(score_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(score_label, 2, 2);
+
+    // 强制渲染初始 "000" 到 framebuffer 并刷屏
+    lv_refr_now(NULL);
+}
+
+static void lvgl_update_score(void) {
+    // 更新标签文本，%03d 保持三位数显示（如 000, 010, 999）
+    lv_label_set_text_fmt(score_label, "%03d", score);
+    lv_obj_invalidate(score_label);
+    // 由 LVGL 统一刷屏（含游戏画面 + 分数），消除闪烁
+    lv_refr_now(NULL);
 }
 
 static void spawn_piece(void) {
@@ -245,7 +301,7 @@ static void render(void) {
                 int x = cur.x + c, y = cur.y + r;
                 if (x >= 0 && x < BOARD_W && y >= 0 && y < BOARD_H) draw_cell(x, y, piece_colors[cur.type]);
             }
-    fb_flush();
+    // fb_flush() 已移除：由 lvgl_update_score() 中的 lv_refr_now() 统一刷屏
 }
 
 static int fall_speed = 6;
@@ -259,7 +315,10 @@ static void game_task(void *arg) {
 
     memset(board, 0, sizeof(board));
     spawn_piece();
-    render();
+    score = 0;
+    lvgl_score_init();  // 显示 "000" 并刷屏
+    render();           // 绘制游戏画面到 framebuffer
+    lvgl_update_score();// LVGL 叠加上分数并统一刷屏
 
     int tick = 0;
     for (;;) {
@@ -282,7 +341,10 @@ static void game_task(void *arg) {
                     cur.y++;
                 else {
                     merge_current_piece();
-                    clear_lines();
+                    int cleared = clear_lines();
+                    if (cleared > 0) {
+                        score += cleared * 10;
+                    }
                     spawn_piece();
                 }
             }
@@ -291,6 +353,8 @@ static void game_task(void *arg) {
 
         // 渲染尽可能快地执行（不受vTaskDelay限制）
         render();
+        // 使用 LVGL 在左上角显示分数
+        lvgl_update_score();
         // 每100微秒让出一次CPU，避免完全占用
         vTaskDelay(pdMS_TO_TICKS(1));
     }
@@ -299,6 +363,9 @@ static void game_task(void *arg) {
 void tetris_start(void) {
     ESP_ERROR_CHECK(st7735_init());
     fb_clear(COLOR_BG);
-    fb_flush();
+    // 初始刷屏：同步等待 + 异步发送
+    st7735_wait_frame();
+    st7735_draw_frame_async((const uint16_t *)FB_CURRENT);
+    st7735_wait_frame();
     xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
 }

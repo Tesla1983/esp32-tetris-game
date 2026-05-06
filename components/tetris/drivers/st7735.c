@@ -1,11 +1,12 @@
 #include "drivers/st7735.h"
-#include "esp_check.h"
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 
 #define LCD_HOST SPI2_HOST
 #define PIN_NUM_MOSI 2
@@ -45,6 +46,10 @@ typedef struct {
 static const char *TAG = "st7735";
 static st7735_dev_t g_lcd;
 
+// 异步 DMA 传输状态
+static spi_transaction_t dma_trans;
+static volatile bool dma_pending = false;
+
 static inline esp_err_t st7735_send_cmd(uint8_t cmd) {
     gpio_set_level(PIN_NUM_DC, 0);
     spi_transaction_t t = {.length = 8, .tx_buffer = &cmd};
@@ -71,6 +76,29 @@ static void st7735_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1
     st7735_send_data(data, 4);
 
     st7735_send_cmd(ST7735_CMD_RAMWR);
+}
+
+esp_err_t st7735_draw_frame_async(const uint16_t *framebuffer) {
+    if (dma_pending) return ESP_ERR_INVALID_STATE;
+
+    st7735_set_window(0, 0, ST7735_H_RES - 1, ST7735_V_RES - 1);
+
+    gpio_set_level(PIN_NUM_DC, 1);
+    memset(&dma_trans, 0, sizeof(dma_trans));
+    dma_trans.length = ST7735_H_RES * ST7735_V_RES * 2 * 8;  // 位长
+    dma_trans.tx_buffer = framebuffer;
+
+    esp_err_t ret = spi_device_queue_trans(g_lcd.spi, &dma_trans, portMAX_DELAY);
+    if (ret == ESP_OK) dma_pending = true;
+    return ret;
+}
+
+esp_err_t st7735_wait_frame(void) {
+    if (!dma_pending) return ESP_OK;
+    spi_transaction_t *rtrans;
+    esp_err_t ret = spi_device_get_trans_result(g_lcd.spi, &rtrans, portMAX_DELAY);
+    if (ret == ESP_OK) dma_pending = false;
+    return ret;
 }
 
 esp_err_t st7735_draw_frame(const uint16_t *framebuffer, int width, int height) {

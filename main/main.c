@@ -5,7 +5,6 @@
 
 void app_main(void) {
     lv_init();
-    lv_tick_set_cb(NULL);
 
     tetris_start();
 }
