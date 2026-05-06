@@ -1,4 +1,5 @@
 idf_component_register(
-    SRCS "tetris_game.c" "drivers/st7735.c"
+    SRCS "main.c"
     INCLUDE_DIRS "."
+    REQUIRES tetris
 )

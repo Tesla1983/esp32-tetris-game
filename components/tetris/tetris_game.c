@@ -5,10 +5,11 @@
 #include "drivers/st7735.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_random.h"
+#include "tetris.h"
 
 static const char *TAG = "TETRIS";
 
@@ -111,7 +112,8 @@ static void fps_render_end(void) {
         }
 
         // 输出详细的性能统计
-        ESP_LOGI(TAG, "当前FPS: %lu | 最大FPS: %lu | 最小FPS: %lu | 平均帧时间: %lu us | 最大帧时间: %lu us | 总帧数: %llu",
+        ESP_LOGI(TAG,
+                 "当前FPS: %lu | 最大FPS: %lu | 最小FPS: %lu | 平均帧时间: %lu us | 最大帧时间: %lu us | 总帧数: %llu",
                  fps_monitor.current_fps, fps_monitor.max_fps, fps_monitor.min_fps, avg_frame_time,
                  fps_monitor.max_frame_time, fps_monitor.total_frames);
 
@@ -225,8 +227,6 @@ static void clear_lines(void) {
 }
 
 static void spawn_piece(void) {
-    // static uint32_t seed = 0x12345678;
-    // seed = seed * 1664525u + 1013904223u;
     cur.type = esp_random() % 7;
     cur.rot = 0;
     cur.x = 3;
@@ -262,22 +262,22 @@ static void game_task(void *arg) {
     render();
 
     int tick = 0;
-    for ( ;;) {
+    for (;;) {
         int64_t now = esp_timer_get_time();
         // 游戏逻辑更新间隔：50ms 更新一次（20 Hz）
         if ((now - last_game_update) >= 50000) {  // 50ms = 50000微秒
             last_game_update = now;
 
-            if ((tick % 30) == 0) { // 每30个tick（即1.5秒）旋转一次
+            if ((tick % 30) == 0) {  // 每30个tick（即1.5秒）旋转一次
                 int test_r = (cur.rot + 3) & 3;
                 if (!collision(&cur, cur.x, cur.y, test_r)) cur.rot = test_r;
             }
-            if ((tick % 10) == 0) { // 每10个tick（即0.5秒）左右移动一次
+            if ((tick % 10) == 0) {  // 每10个tick（即0.5秒）左右移动一次
                 int dir = ((tick / 10) & 1) ? 1 : -1;
                 int test_x = cur.x + dir;
                 if (!collision(&cur, test_x, cur.y, cur.rot)) cur.x = test_x;
             }
-            if ((tick % fall_speed) == 0) { // 每fall_speed个tick（即fall_speed*50ms）下降一次
+            if ((tick % fall_speed) == 0) {  // 每fall_speed个tick（即fall_speed*50ms）下降一次
                 if (!collision(&cur, cur.x, cur.y + 1, cur.rot))
                     cur.y++;
                 else {
@@ -295,9 +295,10 @@ static void game_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
-    void app_main(void) {
-        ESP_ERROR_CHECK(st7735_init());
-        fb_clear(COLOR_BG);
-        fb_flush();
-        xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
-    }
+
+void tetris_start(void) {
+    ESP_ERROR_CHECK(st7735_init());
+    fb_clear(COLOR_BG);
+    fb_flush();
+    xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
+}
