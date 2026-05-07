@@ -12,14 +12,13 @@
 #include "lvgl.h"
 #include "tetris.h"
 
-
 static const char *TAG = "TETRIS";
 
-// 双缓冲 framebuffer：渲染一块，DMA 发送另一块
-static uint16_t framebuffers[2][ST7735_V_RES][ST7735_H_RES];
+// 双缓冲 framebuffer：渲染一块，DMA 发送另一块（堆分配，节省 DRAM BSS）
+static uint16_t (*framebuffers)[ST7735_V_RES][ST7735_H_RES];
 static int fb_idx = 0;  // 当前渲染缓冲区索引
 #define FB_CURRENT framebuffers[fb_idx]
-#define FB_OTHER   framebuffers[fb_idx ^ 1]
+#define FB_OTHER framebuffers[fb_idx ^ 1]
 
 static void fb_fill_rect(int x, int y, int w, int h, uint16_t color_be) {
     if (x >= ST7735_H_RES || y >= ST7735_V_RES) return;
@@ -142,8 +141,7 @@ static void fb_flush(void) {
     // 交换缓冲：下一帧渲染到另一块
     fb_idx ^= 1;
     // 更新 LVGL 的绘制缓冲区指向新的当前缓冲区
-    lv_display_set_buffers(lv_disp_get_default(), FB_CURRENT, NULL,
-                           sizeof(FB_CURRENT), LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_buffers(lv_disp_get_default(), FB_CURRENT, NULL, sizeof(FB_CURRENT), LV_DISPLAY_RENDER_MODE_DIRECT);
 }
 
 #define BOARD_W 10
@@ -256,8 +254,7 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
 static void lvgl_score_init(void) {
     lv_display_t *disp = lv_display_create(ST7735_H_RES, ST7735_V_RES);
     lv_display_set_default(disp);
-    lv_display_set_buffers(disp, FB_CURRENT, NULL, sizeof(FB_CURRENT),
-                           LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_buffers(disp, FB_CURRENT, NULL, sizeof(FB_CURRENT), LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 
@@ -310,15 +307,16 @@ static int64_t last_game_update = 0;  // 游戏逻辑的最后更新时间
 static void game_task(void *arg) {
     (void)arg;
 
+    ESP_LOGI(TAG, "Game task started");
     fps_monitor_init();
     last_game_update = esp_timer_get_time();
 
     memset(board, 0, sizeof(board));
     spawn_piece();
     score = 0;
-    lvgl_score_init();  // 显示 "000" 并刷屏
-    render();           // 绘制游戏画面到 framebuffer
-    lvgl_update_score();// LVGL 叠加上分数并统一刷屏
+    lvgl_score_init();    // 显示 "000" 并刷屏
+    render();             // 绘制游戏画面到 framebuffer
+    lvgl_update_score();  // LVGL 叠加上分数并统一刷屏
 
     int tick = 0;
     for (;;) {
@@ -361,11 +359,26 @@ static void game_task(void *arg) {
 }
 
 void tetris_start(void) {
+    // 从内部 DRAM 堆分配双缓冲 framebuffer（节省静态 BSS 空间给 WiFi/LwIP）
+    size_t fb_size = sizeof(uint16_t) * ST7735_V_RES * ST7735_H_RES;
+    framebuffers =
+        (uint16_t(*)[ST7735_V_RES][ST7735_H_RES])heap_caps_malloc(2 * fb_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    if (!framebuffers) {
+        ESP_LOGE(TAG, "Failed to allocate framebuffers (%u KB)", (uint32_t)(2 * fb_size / 1024));
+        return;
+    }
+    ESP_LOGI(TAG, "Framebuffers allocated in internal RAM (%u KB)", (uint32_t)(2 * fb_size / 1024));
+
     ESP_ERROR_CHECK(st7735_init());
     fb_clear(COLOR_BG);
     // 初始刷屏：同步等待 + 异步发送
     st7735_wait_frame();
     st7735_draw_frame_async((const uint16_t *)FB_CURRENT);
     st7735_wait_frame();
-    xTaskCreate(game_task, "game_task", 40960, NULL, 5, NULL);
+    BaseType_t task_ret = xTaskCreate(game_task, "game_task", 8192, NULL, 5, NULL);
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create game task (ret=%d)", task_ret);
+    } else {
+        ESP_LOGI(TAG, "Game task created successfully");
+    }
 }
